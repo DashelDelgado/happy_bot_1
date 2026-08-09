@@ -1759,13 +1759,13 @@ function startHealthServer(): void {
 }
 
 async function startBot(): Promise<void> {
+  startHealthServer();
   await connectMongo();
   const me = await bot.telegram.getMe();
   botUsername = me.username || "";
   await bot.telegram.setMyCommands(botCommands);
   await bot.launch();
   botReady = true;
-  startHealthServer();
   console.log("Anon Sender Bot is running.");
 }
 
