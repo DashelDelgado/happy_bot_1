@@ -1,0 +1,29 @@
+{
+  "name": "anon-sender-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that republishes photos and videos as albums or single media messages",
+  "main": "dist/app.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --loader ts-node/esm ./src/app.ts",
+    "build": "tsc",
+    "start": "node dist/app.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "album",
+    "media"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mongoose": "^8.7.3",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}
