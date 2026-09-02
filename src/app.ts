@@ -553,9 +553,7 @@ function extractMediaItem(message: any): MediaItem | null {
 function buildOutgoingCaption(
   userId: number,
   sourceCaption?: string,
-  senderName?: string,
 ): string | undefined {
-  const senderPrefix = senderName ? `From ${senderName}\n\n` : "";
   const originalCaption = isCaptionEnabled(userId)
     ? sourceCaption?.trim() || ""
     : "";
@@ -563,20 +561,19 @@ function buildOutgoingCaption(
     ? getCaptionText(userId)
     : "";
 
-  let result = "";
   if (originalCaption && customCaption) {
-    result = `${originalCaption}\n\n${customCaption}`;
-  } else if (originalCaption) {
-    result = originalCaption;
-  } else if (customCaption) {
-    result = customCaption;
+    return `${originalCaption}\n\n${customCaption}`;
   }
 
-  if (senderPrefix && result) {
-    return `${senderPrefix}${result}`;
+  if (originalCaption) {
+    return originalCaption;
   }
 
-  return senderPrefix ? senderPrefix.trim() : result || undefined;
+  if (customCaption) {
+    return customCaption;
+  }
+
+  return undefined;
 }
 
 function chunkItems<T>(items: T[], size: number): T[][] {
@@ -592,10 +589,9 @@ function chunkItems<T>(items: T[], size: number): T[][] {
 function buildMediaGroupPayload(
   items: MediaItem[],
   userId: number,
-  senderName?: string,
 ): Array<{ type: MediaType; media: string; caption?: string }> {
   const captionIndex = items.findIndex((item) => {
-    return Boolean(buildOutgoingCaption(userId, item.caption, senderName));
+    return Boolean(buildOutgoingCaption(userId, item.caption));
   });
 
   return items.map((item, index) => {
@@ -605,7 +601,7 @@ function buildMediaGroupPayload(
     };
 
     if (index === captionIndex) {
-      const caption = buildOutgoingCaption(userId, item.caption, senderName);
+      const caption = buildOutgoingCaption(userId, item.caption);
       if (caption) {
         payload.caption = caption;
       }
@@ -622,7 +618,12 @@ async function sendSingleMedia(
   senderName?: string,
 ): Promise<void> {
   await applyDelay(userId);
-  const caption = buildOutgoingCaption(userId, item.caption, senderName);
+
+  if (senderName) {
+    await bot.telegram.sendMessage(chatId, `From ${senderName}`);
+  }
+
+  const caption = buildOutgoingCaption(userId, item.caption);
 
   if (item.type === "photo") {
     await bot.telegram.sendPhoto(chatId, item.fileId, { caption });
@@ -672,8 +673,12 @@ async function sendBufferedItems(
     }
 
     for (const targetId of pending.targetIds) {
+      if (senderName) {
+        await bot.telegram.sendMessage(targetId, `From ${senderName}`);
+      }
+
       await applyDelay(userId);
-      const payload = buildMediaGroupPayload(batch, userId, senderName);
+      const payload = buildMediaGroupPayload(batch, userId);
       await bot.telegram.sendMediaGroup(targetId, payload);
     }
   }
@@ -700,9 +705,13 @@ async function sendIncomingMediaGroup(
       continue;
     }
 
-    const payload = buildMediaGroupPayload(batch, pending.userId, senderName);
     for (const targetId of pending.targetIds) {
+      if (senderName) {
+        await bot.telegram.sendMessage(targetId, `From ${senderName}`);
+      }
+
       await applyDelay(pending.userId);
+      const payload = buildMediaGroupPayload(batch, pending.userId);
       await bot.telegram.sendMediaGroup(targetId, payload);
     }
   }
