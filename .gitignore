@@ -3,3 +3,4 @@ dist/
 .env
 state.json
 *.log
+.env-2
