@@ -45,6 +45,7 @@ interface PendingQueue {
   targetIds: number[];
   items: MediaItem[];
   timer: NodeJS.Timeout | null;
+  senderName?: string;
 }
 
 interface PendingIncomingMediaGroup {
@@ -52,6 +53,7 @@ interface PendingIncomingMediaGroup {
   userId: number;
   items: MediaItem[];
   timer: NodeJS.Timeout | null;
+  senderName?: string;
 }
 
 interface PersistedState {
@@ -551,7 +553,9 @@ function extractMediaItem(message: any): MediaItem | null {
 function buildOutgoingCaption(
   userId: number,
   sourceCaption?: string,
+  senderName?: string,
 ): string | undefined {
+  const senderPrefix = senderName ? `From ${senderName}\n\n` : "";
   const originalCaption = isCaptionEnabled(userId)
     ? sourceCaption?.trim() || ""
     : "";
@@ -559,19 +563,20 @@ function buildOutgoingCaption(
     ? getCaptionText(userId)
     : "";
 
+  let result = "";
   if (originalCaption && customCaption) {
-    return `${originalCaption}\n\n${customCaption}`;
+    result = `${originalCaption}\n\n${customCaption}`;
+  } else if (originalCaption) {
+    result = originalCaption;
+  } else if (customCaption) {
+    result = customCaption;
   }
 
-  if (originalCaption) {
-    return originalCaption;
+  if (senderPrefix && result) {
+    return `${senderPrefix}${result}`;
   }
 
-  if (customCaption) {
-    return customCaption;
-  }
-
-  return undefined;
+  return senderPrefix ? senderPrefix.trim() : result || undefined;
 }
 
 function chunkItems<T>(items: T[], size: number): T[][] {
@@ -587,9 +592,10 @@ function chunkItems<T>(items: T[], size: number): T[][] {
 function buildMediaGroupPayload(
   items: MediaItem[],
   userId: number,
+  senderName?: string,
 ): Array<{ type: MediaType; media: string; caption?: string }> {
   const captionIndex = items.findIndex((item) => {
-    return Boolean(buildOutgoingCaption(userId, item.caption));
+    return Boolean(buildOutgoingCaption(userId, item.caption, senderName));
   });
 
   return items.map((item, index) => {
@@ -599,7 +605,7 @@ function buildMediaGroupPayload(
     };
 
     if (index === captionIndex) {
-      const caption = buildOutgoingCaption(userId, item.caption);
+      const caption = buildOutgoingCaption(userId, item.caption, senderName);
       if (caption) {
         payload.caption = caption;
       }
@@ -613,9 +619,10 @@ async function sendSingleMedia(
   chatId: number,
   item: MediaItem,
   userId: number,
+  senderName?: string,
 ): Promise<void> {
   await applyDelay(userId);
-  const caption = buildOutgoingCaption(userId, item.caption);
+  const caption = buildOutgoingCaption(userId, item.caption, senderName);
 
   if (item.type === "photo") {
     await bot.telegram.sendPhoto(chatId, item.fileId, { caption });
@@ -629,13 +636,17 @@ async function sendSingleMediaToTargets(
   targetIds: number[],
   item: MediaItem,
   userId: number,
+  senderName?: string,
 ): Promise<void> {
   for (const targetId of targetIds) {
-    await sendSingleMedia(targetId, item, userId);
+    await sendSingleMedia(targetId, item, userId, senderName);
   }
 }
 
-async function sendBufferedItems(userId: number): Promise<void> {
+async function sendBufferedItems(
+  userId: number,
+  senderName?: string,
+): Promise<void> {
   const pending = pendingQueues.get(userId);
   if (!pending || pending.items.length === 0) {
     return;
@@ -651,19 +662,27 @@ async function sendBufferedItems(userId: number): Promise<void> {
 
   for (const batch of batches) {
     if (batch.length === 1) {
-      await sendSingleMediaToTargets(pending.targetIds, batch[0], userId);
+      await sendSingleMediaToTargets(
+        pending.targetIds,
+        batch[0],
+        userId,
+        senderName,
+      );
       continue;
     }
 
     for (const targetId of pending.targetIds) {
       await applyDelay(userId);
-      const payload = buildMediaGroupPayload(batch, userId);
+      const payload = buildMediaGroupPayload(batch, userId, senderName);
       await bot.telegram.sendMediaGroup(targetId, payload);
     }
   }
 }
 
-async function sendIncomingMediaGroup(groupKey: string): Promise<void> {
+async function sendIncomingMediaGroup(
+  groupKey: string,
+  senderName?: string,
+): Promise<void> {
   const pending = incomingMediaGroups.get(groupKey);
   if (!pending || pending.items.length === 0) return;
 
@@ -676,11 +695,12 @@ async function sendIncomingMediaGroup(groupKey: string): Promise<void> {
         pending.targetIds,
         batch[0],
         pending.userId,
+        senderName,
       );
       continue;
     }
 
-    const payload = buildMediaGroupPayload(batch, pending.userId);
+    const payload = buildMediaGroupPayload(batch, pending.userId, senderName);
     for (const targetId of pending.targetIds) {
       await applyDelay(pending.userId);
       await bot.telegram.sendMediaGroup(targetId, payload);
@@ -694,6 +714,7 @@ function queueIncomingMediaGroup(
   targetIds: number[],
   userId: number,
   item: MediaItem,
+  senderName?: string,
 ): void {
   const groupKey = `${chatId}:${mediaGroupId}`;
   const pending = incomingMediaGroups.get(groupKey) ?? {
@@ -701,17 +722,21 @@ function queueIncomingMediaGroup(
     userId,
     items: [],
     timer: null,
+    senderName,
   };
 
   pending.targetIds = targetIds;
   pending.items.push(item);
+  pending.senderName = senderName;
 
   if (pending.timer) clearTimeout(pending.timer);
   pending.timer = setTimeout(
     () => {
-      void sendIncomingMediaGroup(groupKey).catch((error) => {
-        console.error(`Failed to forward media group ${groupKey}:`, error);
-      });
+      void sendIncomingMediaGroup(groupKey, pending.senderName).catch(
+        (error) => {
+          console.error(`Failed to forward media group ${groupKey}:`, error);
+        },
+      );
     },
     Math.max(SEND_DELAY_MS + 1000, 4000),
   );
@@ -724,24 +749,27 @@ function queueMediaItem(
   chatId: number,
   targetIds: number[],
   item: MediaItem,
+  senderName?: string,
 ): void {
   const pending = pendingQueues.get(userId) ?? {
     chatId,
     targetIds,
     items: [],
     timer: null,
+    senderName,
   };
 
   pending.chatId = chatId;
   pending.targetIds = targetIds;
   pending.items.push(item);
+  pending.senderName = senderName;
 
   if (pending.timer) {
     clearTimeout(pending.timer);
   }
 
   pending.timer = setTimeout(() => {
-    void sendBufferedItems(userId).catch((error) => {
+    void sendBufferedItems(userId, pending.senderName).catch((error) => {
       console.error(
         `Failed to flush buffered media for user ${userId}:`,
         error,
@@ -1686,6 +1714,7 @@ async function handleIncomingMedia(ctx: Context): Promise<void> {
 
   const senderModeEnabled = isSenderModeEnabled(userId);
   let targetIds: number[] = [chatId];
+  const senderName = ctx.from?.first_name;
 
   if (senderModeEnabled) {
     if (!(await ensureAuthorizedUser(ctx, userId))) {
@@ -1714,15 +1743,27 @@ async function handleIncomingMedia(ctx: Context): Promise<void> {
         targetIds,
         userId,
         item,
+        senderModeEnabled ? senderName : undefined,
       );
       return;
     }
 
-    await sendSingleMediaToTargets(targetIds, item, userId);
+    await sendSingleMediaToTargets(
+      targetIds,
+      item,
+      userId,
+      senderModeEnabled ? senderName : undefined,
+    );
     return;
   }
 
-  queueMediaItem(userId, chatId, targetIds, item);
+  queueMediaItem(
+    userId,
+    chatId,
+    targetIds,
+    item,
+    senderModeEnabled ? senderName : undefined,
+  );
 }
 
 bot.on("photo", handleIncomingMedia);
