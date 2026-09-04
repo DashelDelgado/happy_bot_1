@@ -220,7 +220,7 @@ function isAddCaptionEnabled(userId: number): boolean {
 }
 
 function isSenderModeEnabled(userId: number): boolean {
-  return getUserSettings(userId).senderModeEnabled ?? false;
+  return getUserSettings(userId).senderModeEnabled ?? true;
 }
 
 function getCaptionText(userId: number): string {
@@ -854,7 +854,7 @@ function buildWelcomeMessage(userId: number): string {
     "Send me photos or videos and I will return them using the bot as the sender.",
     "Album mode is ON by default.",
     "Caption mode is OFF by default.",
-    "Sender mode is OFF by default.",
+    "Sender mode is ON by default.",
     "",
     `Current status: album mode ${isAlbumModeEnabled(userId) ? "ON" : "OFF"}, caption mode ${isCaptionEnabled(userId) ? "ON" : "OFF"}.`,
     `Custom caption: ${isAddCaptionEnabled(userId) ? `ON (${getCaptionText(userId) || "no text set"})` : "OFF"}`,
