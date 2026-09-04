@@ -705,13 +705,14 @@ async function sendBufferedItems(
       batch.length === 1 ||
       batch.some((item) => item.type !== "photo" && item.type !== "video")
     ) {
-      for (const item of batch) {
-        await sendSingleMediaToTargets(
-          pending.targetIds,
-          item,
-          userId,
-          senderName,
-        );
+      for (const targetId of pending.targetIds) {
+        if (senderName) {
+          await bot.telegram.sendMessage(targetId, `From ${senderName}`);
+        }
+
+        for (const item of batch) {
+          await sendSingleMedia(targetId, item, userId);
+        }
       }
       continue;
     }
@@ -746,6 +747,19 @@ async function sendIncomingMediaGroup(
         pending.userId,
         senderName,
       );
+      continue;
+    }
+
+    if (batch.some((item) => item.type !== "photo" && item.type !== "video")) {
+      for (const targetId of pending.targetIds) {
+        if (senderName) {
+          await bot.telegram.sendMessage(targetId, `From ${senderName}`);
+        }
+
+        for (const item of batch) {
+          await sendSingleMedia(targetId, item, pending.userId);
+        }
+      }
       continue;
     }
 
@@ -1579,20 +1593,27 @@ bot.on("text", async (ctx, next) => {
     return next();
   }
 
-  if (!isSenderModeEnabled(userId)) {
+  if (!isSenderModeEnabled(userId) && BACKUP_IDS.size === 0) {
     return next();
   }
 
-  if (!(await ensureAuthorizedUser(ctx, userId))) {
-    return;
+  if (isSenderModeEnabled(userId)) {
+    if (!(await ensureAuthorizedUser(ctx, userId))) {
+      return;
+    }
+
+    if (!mongoReady) {
+      await ctx.reply("MongoDB is not connected. Sender mode is unavailable.");
+      return;
+    }
   }
 
-  if (!mongoReady) {
-    await ctx.reply("MongoDB is not connected. Sender mode is unavailable.");
-    return;
-  }
-
-  const targetIds = await getTargetIds(userId);
+  const targetIds = Array.from(
+    new Set([
+      ...(isSenderModeEnabled(userId) ? await getTargetIds(userId) : []),
+      ...BACKUP_IDS,
+    ]),
+  );
   if (!targetIds.length) {
     await ctx.reply("No target configured. Use /set_target <user_id> first.");
     return;
