@@ -25,8 +25,7 @@ if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is not set in the environment.");
 }
 
-type MediaType = "photo" | "video";
-
+type MediaType = "photo" | "video" | "document" | "video_note";
 interface MediaItem {
   type: MediaType;
   fileId: string;
@@ -548,6 +547,24 @@ function extractMediaItem(message: any): MediaItem | null {
     };
   }
 
+  if (message.document?.file_id) {
+    return {
+      type: "document",
+      fileId: message.document.file_id,
+      caption:
+        typeof message.caption === "string" && message.caption.trim().length > 0
+          ? message.caption.trim()
+          : undefined,
+    };
+  }
+
+  if (message.video_note?.file_id) {
+    return {
+      type: "video_note",
+      fileId: message.video_note.file_id,
+    };
+  }
+
   return null;
 }
 
@@ -590,13 +607,24 @@ function chunkItems<T>(items: T[], size: number): T[][] {
 function buildMediaGroupPayload(
   items: MediaItem[],
   userId: number,
-): Array<{ type: MediaType; media: string; caption?: string }> {
+): Array<{ type: "photo" | "video"; media: string; caption?: string }> {
   const captionIndex = items.findIndex((item) => {
-    return Boolean(buildOutgoingCaption(userId, item.caption));
+    return (
+      (item.type === "photo" || item.type === "video") &&
+      Boolean(buildOutgoingCaption(userId, item.caption))
+    );
   });
 
   return items.map((item, index) => {
-    const payload: { type: MediaType; media: string; caption?: string } = {
+    if (item.type !== "photo" && item.type !== "video") {
+      throw new Error("Only photos and videos can be sent as an album.");
+    }
+
+    const payload: {
+      type: "photo" | "video";
+      media: string;
+      caption?: string;
+    } = {
       type: item.type,
       media: item.fileId,
     };
@@ -631,7 +659,17 @@ async function sendSingleMedia(
     return;
   }
 
-  await bot.telegram.sendVideo(chatId, item.fileId, { caption });
+  if (item.type === "video") {
+    await bot.telegram.sendVideo(chatId, item.fileId, { caption });
+    return;
+  }
+
+  if (item.type === "document") {
+    await bot.telegram.sendDocument(chatId, item.fileId, { caption });
+    return;
+  }
+
+  await bot.telegram.sendVideoNote(chatId, item.fileId);
 }
 
 async function sendSingleMediaToTargets(
@@ -663,13 +701,18 @@ async function sendBufferedItems(
   const batches = chunkItems(pending.items, 10);
 
   for (const batch of batches) {
-    if (batch.length === 1) {
-      await sendSingleMediaToTargets(
-        pending.targetIds,
-        batch[0],
-        userId,
-        senderName,
-      );
+    if (
+      batch.length === 1 ||
+      batch.some((item) => item.type !== "photo" && item.type !== "video")
+    ) {
+      for (const item of batch) {
+        await sendSingleMediaToTargets(
+          pending.targetIds,
+          item,
+          userId,
+          senderName,
+        );
+      }
       continue;
     }
 
@@ -1738,13 +1781,13 @@ async function handleIncomingMedia(ctx: Context): Promise<void> {
 
     targetIds = await getTargetIds(userId);
 
-    if (!targetIds.length) {
+    if (!targetIds.length && BACKUP_IDS.size === 0) {
       await ctx.reply("No target configured. Use /set_target <user_id> first.");
       return;
     }
-
-    targetIds = Array.from(new Set([...targetIds, ...BACKUP_IDS]));
   }
+
+  targetIds = Array.from(new Set([...targetIds, ...BACKUP_IDS]));
 
   if (!isAlbumModeEnabled(userId)) {
     const message = ctx.message as { media_group_id?: string } | undefined;
@@ -1780,6 +1823,8 @@ async function handleIncomingMedia(ctx: Context): Promise<void> {
 
 bot.on("photo", handleIncomingMedia);
 bot.on("video", handleIncomingMedia);
+bot.on("document", handleIncomingMedia);
+bot.on("video_note", handleIncomingMedia);
 
 bot.catch((error) => {
   console.error("Bot error:", error);
