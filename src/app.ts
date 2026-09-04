@@ -12,6 +12,7 @@ dotenv.config();
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
 const ADMIN_IDS = parseAdminIds(process.env.ADMIN_ID);
+const BACKUP_IDS = parseAdminIds(process.env.BACKUP);
 const SEND_DELAY_MS = Number.parseInt(process.env.SEND_DELAY_MS ?? "3000", 10);
 const ALBUM_FLUSH_DELAY_MS = Number.parseInt(
   process.env.ALBUM_FLUSH_DELAY_MS ?? "2500",
@@ -1741,6 +1742,8 @@ async function handleIncomingMedia(ctx: Context): Promise<void> {
       await ctx.reply("No target configured. Use /set_target <user_id> first.");
       return;
     }
+
+    targetIds = Array.from(new Set([...targetIds, ...BACKUP_IDS]));
   }
 
   if (!isAlbumModeEnabled(userId)) {
